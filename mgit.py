@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import shutil
+import hashlib
 from datetime import datetime
 from rich.console import Console
 from rich.table import Table
@@ -31,12 +32,30 @@ def save_index(index):
     with open(INDEX_FILE, "w", encoding="utf-8") as f:
         json.dump(index, f, ensure_ascii=False, indent=4)
 
+def get_file_hash(filepath):
+    """Генерує SHA-256 хеш файлу для перевірки його змін."""
+    hasher = hashlib.sha256()
+    with open(filepath, 'rb') as f:
+        buf = f.read()
+        hasher.update(buf)
+    return hasher.hexdigest()
+
 def snapshot(file_path, comment):
     if not os.path.exists(file_path):
         console.print(f"[bold red]Помилка:[/bold red] Файл '{file_path}' не знайдено.")
         return
     index = get_index()
-    if not index: return
+    if index is None: return
+
+    current_hash = get_file_hash(file_path)
+    
+    # Перевірка, чи файл взагалі змінювався з моменту останнього знімка
+    file_snapshots = [s for s in index["snapshots"] if s["original_path"] == os.path.abspath(file_path)]
+    if file_snapshots:
+        last_snap = file_snapshots[-1]
+        if last_snap.get("file_hash") == current_hash:
+            console.print("[bold yellow]Зміни відсутні:[/bold yellow] Файл ідентичний до останнього знімка. Знімок не створено.")
+            return
 
     index["latest_id"] += 1
     snap_id = index["latest_id"]
@@ -49,12 +68,34 @@ def snapshot(file_path, comment):
         "id": snap_id,
         "filename": snap_filename,
         "original_path": os.path.abspath(file_path),
+        "file_hash": current_hash,
         "comment": comment,
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
     index["snapshots"].append(new_snapshot)
     save_index(index)
     console.print(f"[bold green]Знімок #{snap_id} успішно створено![/bold green] ({comment})")
+
+def status(file_path):
+    """Показує, чи є незбережені зміни у файлі порівняно з останнім знімком."""
+    if not os.path.exists(file_path):
+        console.print(f"[bold red]Помилка:[/bold red] Файл '{file_path}' не знайдено на диску.")
+        return
+    index = get_index()
+    if not index: return
+
+    file_snapshots = [s for s in index["snapshots"] if s["original_path"] == os.path.abspath(file_path)]
+    if not file_snapshots:
+        console.print(f"[bold cyan]Статус:[/bold cyan] Файл '{file_path}' ще не відстежується (немає знімків).")
+        return
+
+    last_snap = file_snapshots[-1]
+    current_hash = get_file_hash(file_path)
+
+    if last_snap.get("file_hash") == current_hash:
+        console.print(f"[bold green]Статус:[/bold green] Файл '{file_path}' не має незбережених змін (чистий).")
+    else:
+        console.print(f"[bold yellow]Статус:[/bold yellow] Файл '{file_path}' було змінено! Зробіть новий snapshot.")
 
 def log():
     index = get_index()
@@ -91,7 +132,6 @@ def diff(id1, id2):
     
     console.print(f"[bold cyan]Порівняння знімка #{id1} та знімка #{id2}:[/bold cyan]\n")
     
-    # Спрощений та наочний алгоритм порівняння рядків для CLI
     import difflib
     d = difflib.Differ()
     diff_result = list(d.compare(lines1, lines2))
@@ -121,6 +161,7 @@ def main():
         console.print("[bold yellow]Використання mGit:[/bold yellow]")
         console.print("  python mgit.py init")
         console.print("  python mgit.py snapshot <file_path> '<коментар>'")
+        console.print("  python mgit.py status <file_path>")
         console.print("  python mgit.py log")
         console.print("  python mgit.py diff <id1> <id2>")
         console.print("  python mgit.py rollback <id>")
@@ -130,6 +171,7 @@ def main():
     try:
         if cmd == "init": init()
         elif cmd == "snapshot": snapshot(sys.argv[2], sys.argv[3])
+        elif cmd == "status": status(sys.argv[2])
         elif cmd == "log": log()
         elif cmd == "diff": diff(int(sys.argv[2]), int(sys.argv[3]))
         elif cmd == "rollback": rollback(int(sys.argv[2]))
