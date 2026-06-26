@@ -6,6 +6,9 @@ import hashlib
 from datetime import datetime
 from rich.console import Console
 from rich.table import Table
+from rich.panel import Panel
+from rich.align import Align
+from rich.text import Text
 
 console = Console()
 MGIT_DIR = ".mgit"
@@ -33,7 +36,6 @@ def save_index(index):
         json.dump(index, f, ensure_ascii=False, indent=4)
 
 def get_file_hash(filepath):
-    """Генерує SHA-256 хеш файлу для перевірки його змін."""
     hasher = hashlib.sha256()
     with open(filepath, 'rb') as f:
         buf = f.read()
@@ -49,7 +51,6 @@ def snapshot(file_path, comment):
 
     current_hash = get_file_hash(file_path)
     
-    # Перевірка, чи файл взагалі змінювався з моменту останнього знімка
     file_snapshots = [s for s in index["snapshots"] if s["original_path"] == os.path.abspath(file_path)]
     if file_snapshots:
         last_snap = file_snapshots[-1]
@@ -77,7 +78,6 @@ def snapshot(file_path, comment):
     console.print(f"[bold green]Знімок #{snap_id} успішно створено![/bold green] ({comment})")
 
 def status(file_path):
-    """Показує, чи є незбережені зміни у файлі порівняно з останнім знімком."""
     if not os.path.exists(file_path):
         console.print(f"[bold red]Помилка:[/bold red] Файл '{file_path}' не знайдено на диску.")
         return
@@ -112,6 +112,33 @@ def log():
     for s in index["snapshots"]:
         table.add_row(str(s["id"]), s["timestamp"], os.path.basename(s["original_path"]), s["comment"])
     console.print(table)
+
+def stats():
+    index = get_index()
+    if not index: return
+
+    num_snapshots = len(index["snapshots"])
+    
+    total_size_bytes = 0
+    for dirpath, _, filenames in os.walk(SNAPSHOTS_DIR):
+        for f in filenames:
+            fp = os.path.join(dirpath, f)
+            if not os.path.islink(fp):
+                total_size_bytes += os.path.getsize(fp)
+    
+    size_kb = total_size_bytes / 1024
+    
+    stats_text = Text()
+    stats_text.append("📊 Статистика mGit\n\n", style="bold cyan")
+    stats_text.append(f"Всього знімків: ", style="white")
+    stats_text.append(f"{num_snapshots}\n", style="bold green")
+    stats_text.append(f"Останній ID: ", style="white")
+    stats_text.append(f"{index['latest_id']}\n", style="bold yellow")
+    stats_text.append(f"Загальний розмір сховища: ", style="white")
+    stats_text.append(f"{size_kb:.2f} KB\n", style="bold magenta")
+    
+    panel = Panel(stats_text, title="[bold blue]Аналітика репозиторію[/bold blue]", expand=False)
+    console.print(panel)
 
 def diff(id1, id2):
     index = get_index()
@@ -156,15 +183,84 @@ def rollback(snap_id):
     shutil.copy2(src, dest)
     console.print(f"[bold green]Успіх:[/bold green] Файл відновлено до стану знімка #{snap_id}!")
 
+def interactive_mode():
+    import time
+    while True:
+        console.print("\n[bold cyan]=== 📦 mGit Інтерактивне меню ===[/bold cyan]")
+        console.print("[green]1.[/green] Ініціалізувати репозиторій (init)")
+        console.print("[green]2.[/green] Створити знімок файлу (snapshot)")
+        console.print("[green]3.[/green] Перевірити статус файлу (status)")
+        console.print("[green]4.[/green] Переглянути історію версій (log)")
+        console.print("[green]5.[/green] Порівняти дві версії (diff)")
+        console.print("[green]6.[/green] Відновити файл до версії (rollback)")
+        console.print("[green]7.[/green] [bold magenta]Показати статистику (stats)[/bold magenta]")
+        console.print("[red]0.[/red] Вихід")
+        
+        choice = console.input("\n[bold yellow]Ваш вибір:[/bold yellow] ").strip()
+        
+        if choice == "1":
+            init()
+        elif choice == "2":
+            filepath = console.input("Шлях до файлу: ").strip()
+            comment = console.input("Коментар до знімка: ").strip()
+            snapshot(filepath, comment)
+        elif choice == "3":
+            filepath = console.input("Шлях до файлу: ").strip()
+            status(filepath)
+        elif choice == "4":
+            log()
+        elif choice == "5":
+            try:
+                id1 = int(console.input("Введіть ID першого знімка: ").strip())
+                id2 = int(console.input("Введіть ID другого знімка: ").strip())
+                diff(id1, id2)
+            except ValueError:
+                console.print("[bold red]Помилка:[/bold red] ID мають бути числами.")
+        elif choice == "6":
+            try:
+                snap_id = int(console.input("Введіть ID знімка для відновлення: ").strip())
+                rollback(snap_id)
+            except ValueError:
+                console.print("[bold red]Помилка:[/bold red] ID має бути числом.")
+        elif choice == "7":
+            stats()
+        elif choice == "0":
+            console.print("[bold green]Вихід із mGit. Роботу завершено.[/bold green]")
+            break
+        else:
+            console.print("[bold red]Невідома команда, спробуйте ще раз.[/bold red]")
+        
+        time.sleep(0.5)
+
 def main():
     if len(sys.argv) < 2:
-        console.print("[bold yellow]Використання mGit:[/bold yellow]")
-        console.print("  python mgit.py init")
-        console.print("  python mgit.py snapshot <file_path> '<коментар>'")
-        console.print("  python mgit.py status <file_path>")
-        console.print("  python mgit.py log")
-        console.print("  python mgit.py diff <id1> <id2>")
-        console.print("  python mgit.py rollback <id>")
+        help_text = (
+            "Ви запустили mGit без аргументів.\n\n"
+            "[bold green]Формат використання з консолі:[/bold green]\n"
+            "  python mgit.py <команда> [аргументи]\n\n"
+            "[bold green]Доступні команди:[/bold green]\n"
+            "  init      - Ініціалізувати новий репозиторій\n"
+            "  snapshot  - Створити знімок (аргументи: <файл> '<коментар>')\n"
+            "  status    - Перевірити наявність змін (аргументи: <файл>)\n"
+            "  log       - Переглянути історію версій\n"
+            "  diff      - Показати різницю між версіями (аргументи: <id1> <id2>)\n"
+            "  rollback  - Відновити файл до версії (аргументи: <id>)\n"
+            "  stats     - [Бонус] Показати статистику репозиторію"
+        )
+        panel = Panel(
+            Align.center(help_text), 
+            title="[bold cyan]mGit - Мінімальна система контролю версій[/bold cyan]", 
+            subtitle="[grey50]v1.1 | Practice Edition[/grey50]",
+            expand=False,
+            border_style="cyan"
+        )
+        console.print(panel)
+        
+        choice = console.input("\n[bold yellow]Бажаєте перейти в Інтерактивне меню? (Y/n): [/bold yellow]").strip().lower()
+        if choice != 'n':
+            interactive_mode()
+        else:
+            console.print("[bold grey50]Роботу завершено. Використовуйте аргументи командного рядка![/bold grey50]")
         return
 
     cmd = sys.argv[1].lower()
@@ -175,7 +271,8 @@ def main():
         elif cmd == "log": log()
         elif cmd == "diff": diff(int(sys.argv[2]), int(sys.argv[3]))
         elif cmd == "rollback": rollback(int(sys.argv[2]))
-        else: console.print("[bold red]Невідома команда![/bold red]")
+        elif cmd == "stats": stats()
+        else: console.print("[bold red]Невідома команда! Запустіть mgit.py без аргументів для довідки.[/bold red]")
     except IndexError:
         console.print("[bold red]Помилка вводу:[/bold red] Перевірте правильність та кількість аргументів команди.")
     except ValueError:
