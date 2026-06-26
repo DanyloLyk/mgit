@@ -17,23 +17,37 @@ INDEX_FILE = os.path.join(MGIT_DIR, "index.json")
 
 def init():
     if os.path.exists(MGIT_DIR):
-        console.print("[bold yellow]Попередження:[/bold yellow] mGit репозиторій вже існує.")
+        console.print("[bold yellow]⚠ Попередження:[/bold yellow] mGit репозиторій вже існує.")
         return
-    os.makedirs(SNAPSHOTS_DIR, exist_ok=True)
-    with open(INDEX_FILE, "w", encoding="utf-8") as f:
-        json.dump({"snapshots": [], "latest_id": 0}, f, ensure_ascii=False, indent=4)
-    console.print("[bold green]Успіх:[/bold green] Створено порожній репозиторій mGit.")
+    
+    with console.status("[bold cyan]Ініціалізація репозиторію...[/bold cyan]", spinner="dots"):
+        os.makedirs(SNAPSHOTS_DIR, exist_ok=True)
+        
+        with open(INDEX_FILE, "w", encoding="utf-8") as f:
+            json.dump({"snapshots": [], "latest_id": 0}, f, ensure_ascii=False, indent=4)
+            
+        with open(os.path.join(MGIT_DIR, ".gitignore"), "w", encoding="utf-8") as f:
+            f.write("*\n")
+            
+    console.print("[bold green]✔ Успіх:[/bold green] Створено порожній ізольований репозиторій mGit.")
 
 def get_index():
     if not os.path.exists(INDEX_FILE):
-        console.print("[bold red]Помилка:[/bold red] Репозиторій не ініціалізовано. Запустіть 'python mgit.py init'")
+        console.print("[bold red]✖ Помилка:[/bold red] Репозиторій не ініціалізовано. Запустіть 'python mgit.py init'")
         return None
-    with open(INDEX_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open(INDEX_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except json.JSONDecodeError:
+        console.print("[bold red]✖ Критична помилка:[/bold red] Файл індексу (index.json) пошкоджено. Неможливо прочитати дані.")
+        return None
 
 def save_index(index):
-    with open(INDEX_FILE, "w", encoding="utf-8") as f:
-        json.dump(index, f, ensure_ascii=False, indent=4)
+    try:
+        with open(INDEX_FILE, "w", encoding="utf-8") as f:
+            json.dump(index, f, ensure_ascii=False, indent=4)
+    except IOError as e:
+        console.print(f"[bold red]✖ Помилка запису:[/bold red] Не вдалося зберегти індекс. Деталі: {e}")
 
 def get_file_hash(filepath):
     hasher = hashlib.sha256()
@@ -44,72 +58,88 @@ def get_file_hash(filepath):
 
 def snapshot(file_path, comment):
     if not os.path.exists(file_path):
-        console.print(f"[bold red]Помилка:[/bold red] Файл '{file_path}' не знайдено.")
+        console.print(f"[bold red]✖ Помилка:[/bold red] Файл '{file_path}' не знайдено.")
         return
+        
     index = get_index()
     if index is None: return
 
     current_hash = get_file_hash(file_path)
+    abs_path = os.path.abspath(file_path)
     
-    file_snapshots = [s for s in index["snapshots"] if s["original_path"] == os.path.abspath(file_path)]
+    file_snapshots = [s for s in index["snapshots"] if s["original_path"] == abs_path]
     if file_snapshots:
-        last_snap = file_snapshots[-1]
-        if last_snap.get("file_hash") == current_hash:
-            console.print("[bold yellow]Зміни відсутні:[/bold yellow] Файл ідентичний до останнього знімка. Знімок не створено.")
+        if file_snapshots[-1].get("file_hash") == current_hash:
+            console.print("[bold yellow]⚠ Зміни відсутні:[/bold yellow] Файл ідентичний до останнього знімка.")
             return
 
-    index["latest_id"] += 1
-    snap_id = index["latest_id"]
-    
-    snap_filename = f"snap_{snap_id}_{os.path.basename(file_path)}"
-    dest_path = os.path.join(SNAPSHOTS_DIR, snap_filename)
-    shutil.copy2(file_path, dest_path)
-    
-    new_snapshot = {
-        "id": snap_id,
-        "filename": snap_filename,
-        "original_path": os.path.abspath(file_path),
-        "file_hash": current_hash,
-        "comment": comment,
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    }
-    index["snapshots"].append(new_snapshot)
-    save_index(index)
-    console.print(f"[bold green]Знімок #{snap_id} успішно створено![/bold green] ({comment})")
+    with console.status("[bold cyan]Створення знімка...[/bold cyan]", spinner="bouncingBar"):
+        index["latest_id"] += 1
+        snap_id = index["latest_id"]
+        
+        snap_filename = f"snap_{snap_id}_{os.path.basename(file_path)}"
+        dest_path = os.path.join(SNAPSHOTS_DIR, snap_filename)
+        
+        try:
+            shutil.copy2(file_path, dest_path)
+        except IOError as e:
+            console.print(f"[bold red]✖ Помилка копіювання:[/bold red] {e}")
+            return
+        
+        new_snapshot = {
+            "id": snap_id,
+            "filename": snap_filename,
+            "original_path": abs_path,
+            "file_hash": current_hash,
+            "comment": comment,
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        index["snapshots"].append(new_snapshot)
+        save_index(index)
+        
+    console.print(f"[bold green]✔ Знімок #{snap_id} успішно створено![/bold green] ({comment})")
+
 
 def status(file_path):
     if not os.path.exists(file_path):
-        console.print(f"[bold red]Помилка:[/bold red] Файл '{file_path}' не знайдено на диску.")
+        console.print(f"[bold red]✖ Помилка:[/bold red] Файл '{file_path}' не знайдено на диску.")
         return
+        
     index = get_index()
     if not index: return
 
-    file_snapshots = [s for s in index["snapshots"] if s["original_path"] == os.path.abspath(file_path)]
+    abs_path = os.path.abspath(file_path)
+    file_snapshots = [s for s in index["snapshots"] if s["original_path"] == abs_path]
+    
     if not file_snapshots:
-        console.print(f"[bold cyan]Статус:[/bold cyan] Файл '{file_path}' ще не відстежується (немає знімків).")
+        panel = Panel(f"Файл [bold cyan]{file_path}[/bold cyan] ще не відстежується.", title="[bold cyan]ℹ Статус[/bold cyan]", border_style="cyan", expand=False)
+        console.print(panel)
         return
 
     last_snap = file_snapshots[-1]
     current_hash = get_file_hash(file_path)
 
     if last_snap.get("file_hash") == current_hash:
-        console.print(f"[bold green]Статус:[/bold green] Файл '{file_path}' не має незбережених змін (чистий).")
+        panel = Panel(f"Файл [bold green]{file_path}[/bold green] не має незбережених змін.", title="[bold green]✔ Чисто[/bold green]", border_style="green", expand=False)
+        console.print(panel)
     else:
-        console.print(f"[bold yellow]Статус:[/bold yellow] Файл '{file_path}' було змінено! Зробіть новий snapshot.")
+        panel = Panel(f"Файл [bold yellow]{file_path}[/bold yellow] було змінено!\nРекомендується зробити новий snapshot.", title="[bold yellow]⚠ Є зміни[/bold yellow]", border_style="yellow", expand=False)
+        console.print(panel)
 
 def log():
     index = get_index()
-    if not index or not index["snapshots"]:
-        console.print("[yellow]Історія знімків порожня або репозиторій не знайдено.[/yellow]")
+    if not index: return
+    if not index.get("snapshots"):
+        console.print("[bold yellow]⚠ Історія знімків порожня.[/bold yellow]")
         return
     
-    table = Table(title="📜 Історія знімків mGit")
-    table.add_column("ID", justify="center", style="cyan")
+    table = Table(title="📜 Історія знімків mGit", border_style="cyan")
+    table.add_column("ID", justify="center", style="bold cyan")
     table.add_column("Дата/Час", style="green")
     table.add_column("Файл", style="magenta")
     table.add_column("Коментар", style="white")
     
-    for s in index["snapshots"]:
+    for s in reversed(index["snapshots"]):
         table.add_row(str(s["id"]), s["timestamp"], os.path.basename(s["original_path"]), s["comment"])
     console.print(table)
 
@@ -117,30 +147,35 @@ def stats():
     index = get_index()
     if not index: return
 
-    num_snapshots = len(index["snapshots"])
-    
+    num_snapshots = len(index.get("snapshots", []))
     total_size_bytes = 0
-    for dirpath, _, filenames in os.walk(SNAPSHOTS_DIR):
-        for f in filenames:
-            fp = os.path.join(dirpath, f)
-            if not os.path.islink(fp):
-                total_size_bytes += os.path.getsize(fp)
+    
+    if os.path.exists(SNAPSHOTS_DIR):
+        for dirpath, _, filenames in os.walk(SNAPSHOTS_DIR):
+            for f in filenames:
+                fp = os.path.join(dirpath, f)
+                if not os.path.islink(fp):
+                    total_size_bytes += os.path.getsize(fp)
     
     size_kb = total_size_bytes / 1024
     
     stats_text = Text()
     stats_text.append("📊 Статистика mGit\n\n", style="bold cyan")
-    stats_text.append(f"Всього знімків: ", style="white")
+    stats_text.append("Всього знімків: ", style="white")
     stats_text.append(f"{num_snapshots}\n", style="bold green")
-    stats_text.append(f"Останній ID: ", style="white")
-    stats_text.append(f"{index['latest_id']}\n", style="bold yellow")
-    stats_text.append(f"Загальний розмір сховища: ", style="white")
+    stats_text.append("Останній ID: ", style="white")
+    stats_text.append(f"{index.get('latest_id', 0)}\n", style="bold yellow")
+    stats_text.append("Загальний розмір архіву: ", style="white")
     stats_text.append(f"{size_kb:.2f} KB\n", style="bold magenta")
     
-    panel = Panel(stats_text, title="[bold blue]Аналітика репозиторію[/bold blue]", expand=False)
+    panel = Panel(stats_text, title="[bold blue]Аналітика репозиторію[/bold blue]", expand=False, border_style="blue")
     console.print(panel)
 
 def diff(id1, id2):
+    if id1 == id2:
+        console.print("[bold yellow]⚠ Попередження:[/bold yellow] Ви намагаєтесь порівняти знімок сам із собою.")
+        return
+        
     index = get_index()
     if not index: return
     
@@ -148,14 +183,18 @@ def diff(id1, id2):
     snap2 = next((s for s in index["snapshots"] if s["id"] == id2), None)
     
     if not snap1 or not snap2:
-        console.print("[bold red]Помилка:[/bold red] Один або обидва ID знімків не знайдено в базі.")
+        console.print("[bold red]✖ Помилка:[/bold red] Один або обидва ID знімків не знайдено в базі.")
         return
         
     path1 = os.path.join(SNAPSHOTS_DIR, snap1["filename"])
     path2 = os.path.join(SNAPSHOTS_DIR, snap2["filename"])
     
-    with open(path1, "r", encoding="utf-8", errors="ignore") as f: lines1 = f.readlines()
-    with open(path2, "r", encoding="utf-8", errors="ignore") as f: lines2 = f.readlines()
+    try:
+        with open(path1, "r", encoding="utf-8", errors="ignore") as f: lines1 = f.readlines()
+        with open(path2, "r", encoding="utf-8", errors="ignore") as f: lines2 = f.readlines()
+    except IOError as e:
+        console.print(f"[bold red]✖ Помилка доступу до файлів знімків:[/bold red] {e}")
+        return
     
     console.print(f"[bold cyan]Порівняння знімка #{id1} та знімка #{id2}:[/bold cyan]\n")
     
@@ -174,14 +213,23 @@ def diff(id1, id2):
 def rollback(snap_id):
     index = get_index()
     if not index: return
+    
     snap = next((s for s in index["snapshots"] if s["id"] == snap_id), None)
     if not snap:
-        console.print(f"[bold red]Помилка:[/bold red] Знімок з ID {snap_id} не знайдено.")
+        console.print(f"[bold red]✖ Помилка:[/bold red] Знімок з ID {snap_id} не знайдено.")
         return
+        
     src = os.path.join(SNAPSHOTS_DIR, snap["filename"])
     dest = snap["original_path"]
-    shutil.copy2(src, dest)
-    console.print(f"[bold green]Успіх:[/bold green] Файл відновлено до стану знімка #{snap_id}!")
+    
+    with console.status(f"[bold cyan]Відновлення файлу до стану знімка #{snap_id}...[/bold cyan]", spinner="dots"):
+        try:
+            shutil.copy2(src, dest)
+        except IOError as e:
+            console.print(f"[bold red]✖ Помилка відновлення:[/bold red] Не вдалося перезаписати цільовий файл. Деталі: {e}")
+            return
+            
+    console.print(f"[bold green]✔ Успіх:[/bold green] Файл відновлено до стану знімка #{snap_id}!")
 
 def interactive_mode():
     import time
