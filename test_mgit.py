@@ -1,59 +1,108 @@
 import os
 import shutil
+import time
 import mgit
+from rich.console import Console
 
-# Налаштування тестового середовища
-TEST_FILE = "test_dummy.txt"
+console = Console()
+TEST_FILE = "fighter_analytics.py"
 TEST_MGIT_DIR = ".mgit"
 
-def setup():
-    """Створює тестовий файл та ініціалізує чистий репозиторій."""
+def reset_env():
+    """Очищає середовище перед початком тестування."""
     if os.path.exists(TEST_MGIT_DIR):
         shutil.rmtree(TEST_MGIT_DIR)
-    
-    with open(TEST_FILE, "w", encoding="utf-8") as f:
-        f.write("Line 1\nLine 2\n")
-    
-    mgit.init()
-
-def teardown():
-    """Прибирає за собою після тестування."""
     if os.path.exists(TEST_FILE):
         os.remove(TEST_FILE)
-    if os.path.exists(TEST_MGIT_DIR):
-        shutil.rmtree(TEST_MGIT_DIR)
 
-def run_tests():
-    print("🚀 Запуск тестів mGit...\n")
-    setup()
+def run_comprehensive_test():
+    console.print("\n[bold magenta]🚀 Запуск комплексного генератора тестів mGit...[/bold magenta]\n")
+    reset_env()
+
+    # --- КРОК 1: Ініціалізація ---
+    console.print("[bold blue]► Крок 1: Ініціалізація порожнього репозиторію[/bold blue]")
+    mgit.init()
+    time.sleep(1)
+
+    # --- КРОК 2: Базова версія коду ---
+    console.print("\n[bold blue]► Крок 2: Створення V1 (Базова математична функція)[/bold blue]")
+    v1_code = '''def calculate_win_rate(wins, losses):
+    total = wins + losses
+    if total == 0:
+        return 0
+    return (wins / total) * 100
+'''
+    with open(TEST_FILE, "w", encoding="utf-8") as f:
+        f.write(v1_code)
+
+    mgit.snapshot(TEST_FILE, "feat: додано базовий розрахунок вінрейту")
+    time.sleep(1)
+
+    # --- КРОК 3: Статус ---
+    console.print("\n[bold blue]► Крок 3: Перевірка статусу чистого робочого дерева[/bold blue]")
+    mgit.status(TEST_FILE)
+    time.sleep(1)
+
+    # --- КРОК 4: Складна модифікація коду ---
+    console.print("\n[bold blue]► Крок 4: Створення V2 (Зміна існуючого коду та додавання нового)[/bold blue]")
+    v2_code = '''def calculate_win_rate(wins, losses, draws=0):
+    total = wins + losses + draws
+    if total == 0:
+        return 0.0
+    return round((wins / total) * 100, 2)
+
+def calculate_stamina_drain(rounds, cardio_base):
+    return max(0, (rounds * 5) - cardio_base)
+'''
+    with open(TEST_FILE, "w", encoding="utf-8") as f:
+        f.write(v2_code)
+        
+    mgit.status(TEST_FILE) # Має показати жовте попередження про зміни
+    mgit.snapshot(TEST_FILE, "refactor: змінено логіку вінрейту (додано draws) та stamina_drain")
+    time.sleep(1)
+
+    # --- КРОК 5: Видалення та додавання ООП ---
+    console.print("\n[bold blue]► Крок 5: Створення V3 (Видалення функції та додавання ООП класу)[/bold blue]")
+    v3_code = '''def calculate_win_rate(wins, losses, draws=0):
+    total = wins + losses + draws
+    if total == 0:
+        return 0.0
+    return round((wins / total) * 100, 2)
+
+class Fighter:
+    def __init__(self, name, weight_kg):
+        self.name = name
+        self.weight_kg = weight_kg
+        self.record = {"W": 0, "L": 0, "D": 0}
+'''
+    with open(TEST_FILE, "w", encoding="utf-8") as f:
+        f.write(v3_code)
+
+    mgit.snapshot(TEST_FILE, "feat: видалено функцію витривалості, додано клас Fighter")
+    time.sleep(1)
+
+    # --- КРОК 6: Історія та Аналітика ---
+    console.print("\n[bold blue]► Крок 6: Генерація історії (log) та статистики (stats)[/bold blue]")
+    mgit.log()
+    print("\n")
+    mgit.stats()
+    time.sleep(1)
+
+    # --- КРОК 7: Демонстрація роботи Diff ---
+    console.print("\n[bold blue]► Крок 7: Аналіз змін (Diff)[/bold blue]")
+    console.print("[grey50]Різниця між V1 та V2 (Зміна сигнатури функції та нові рядки):[/grey50]")
+    mgit.diff(1, 2)
     
-    try:
-        # Тест 1: Створення першого знімка
-        mgit.snapshot(TEST_FILE, "Test commit 1")
-        index = mgit.get_index()
-        assert len(index["snapshots"]) == 1, "Помилка: Знімок не зберігся в індексі!"
-        print("✅ Тест 1: Перший знімок створено успішно.")
+    console.print("\n[grey50]Різниця між V2 та V3 (Видалення функції та додавання класу):[/grey50]")
+    mgit.diff(2, 3)
+    time.sleep(1)
 
-        # Тест 2: Спроба створити дублікат (файл не мінявся)
-        # Оскільки ми додали хешування, довжина списку знімків має лишитися = 1
-        print("\nОчікується попередження про відсутність змін:")
-        mgit.snapshot(TEST_FILE, "Test commit 2 - duplicate")
-        index = mgit.get_index()
-        assert len(index["snapshots"]) == 1, "Помилка: Створено дублікат знімка без змін файлу!"
-        print("✅ Тест 2: Захист від дублікатів працює (через SHA-256).")
-        
-        # Тест 3: Зміна файлу і новий знімок
-        with open(TEST_FILE, "a", encoding="utf-8") as f:
-            f.write("Line 3 - new modifications\n")
-        
-        mgit.snapshot(TEST_FILE, "Test commit 3 - updated")
-        index = mgit.get_index()
-        assert len(index["snapshots"]) == 2, "Помилка: Змінений файл не зберігся як новий знімок!"
-        print("✅ Тест 3: Змінений файл успішно розпізнано та збережено.")
-        
-    finally:
-        teardown()
-        print("\n🏁 Тестування завершено. Середовище очищено.")
+    # --- КРОК 8: Відкат ---
+    console.print("\n[bold blue]► Крок 8: Перевірка безпеки - відкат до V2[/bold blue]")
+    mgit.rollback(2)
+
+    console.print("\n[bold green]🏁 Тестування успішно завершено![/bold green]")
+    console.print("[bold yellow]ℹ Згенерований тестовий файл 'fighter_analytics.py' та база '.mgit' залишені на диску для ручної перевірки.[/bold yellow]")
 
 if __name__ == "__main__":
-    run_tests()
+    run_comprehensive_test()
