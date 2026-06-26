@@ -1,0 +1,12 @@
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.mgit/
+test_dummy.txt
+fighter_stats.py
+my_code.txt
+.DS_Store
+Thumbs.db
